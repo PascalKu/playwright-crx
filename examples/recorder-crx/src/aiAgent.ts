@@ -314,10 +314,17 @@ function sanitizeMessages(messages: AgentMessage[]): AgentMessage[] {
 
 function buildInitialUserText(prompt: string, currentScript?: string, pageUrl?: string, localBaseUrl?: string, isContinuation = false): string {
   const parts: string[] = [];
-  if (pageUrl)
+  let suggestedBaseUrl: string | undefined;
+  if (pageUrl) {
     parts.push(`Current page URL: ${pageUrl}`);
-  if (localBaseUrl)
-    parts.push(`User's local-dev base URL (for context only — do NOT add a BASE_URL constant; use relative paths in goto): ${localBaseUrl}`);
+    try {
+      suggestedBaseUrl = new URL(pageUrl).origin;
+    } catch { /* invalid url */ }
+  }
+  if (!suggestedBaseUrl && localBaseUrl)
+    suggestedBaseUrl = localBaseUrl;
+  if (suggestedBaseUrl)
+    parts.push(`Suggested BASE_URL fallback for the test (use as the literal default for process.env.BASE_URL): ${suggestedBaseUrl}`);
   if (!isContinuation && currentScript && currentScript.trim()) {
     parts.push('Current generated script (the recorder will keep this in sync as you act):');
     parts.push('```');

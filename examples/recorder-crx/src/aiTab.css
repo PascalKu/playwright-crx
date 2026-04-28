@@ -175,6 +175,12 @@
   background: var(--vscode-input-background, white);
   color: var(--vscode-input-foreground, inherit);
 }
+.ai-input textarea.ai-failure {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  background: var(--vscode-editor-background, #f6f8fa);
+  border-color: var(--vscode-charts-yellow, #d4a017);
+}
 
 .ai-actions {
   display: flex;

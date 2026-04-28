@@ -165,6 +165,86 @@ function parserError(message: string, loc?: acorn.SourceLocation | null): never 
   throw new ParserError(message, loc ?? undefined);
 }
 
+// Map of top-level `const NAME = ...` declarations resolved to their
+// string/number values. Populated at the start of each parse() call so
+// `argsParser` can dereference them when an action argument is an Identifier
+// (e.g. `await page.goto(BASE_URL)`).
+let _constants = new Map<string, any>();
+
+function evaluateExpressionToString(expr: any): string | undefined {
+  if (!expr)
+    return undefined;
+  switch (expr.type) {
+    case 'Literal':
+      return typeof expr.value === 'string' ? expr.value : undefined;
+    case 'TemplateLiteral': {
+      let result = '';
+      for (let i = 0; i < expr.quasis.length; i++) {
+        result += expr.quasis[i].value.cooked ?? '';
+        if (i < expr.expressions.length) {
+          const v = evaluateExpressionToString(expr.expressions[i]);
+          if (v === undefined)
+            return undefined;
+          result += v;
+        }
+      }
+      return result;
+    }
+    case 'Identifier': {
+      const v = _constants.get(expr.name);
+      return typeof v === 'string' ? v : undefined;
+    }
+    case 'BinaryExpression': {
+      if (expr.operator === '+') {
+        const left = evaluateExpressionToString(expr.left);
+        const right = evaluateExpressionToString(expr.right);
+        if (left !== undefined && right !== undefined)
+          return left + right;
+      }
+      return undefined;
+    }
+    case 'LogicalExpression': {
+      if (expr.operator === '??' || expr.operator === '||') {
+        // process.env.X is unknown at parse time → evaluates to undefined →
+        // we fall through to the right-hand fallback.
+        const left = evaluateExpressionToString(expr.left);
+        if (left !== undefined)
+          return left;
+        return evaluateExpressionToString(expr.right);
+      }
+      return undefined;
+    }
+    case 'MemberExpression':
+      // process.env.X / arbitrary member access — unresolvable at parse time.
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+function collectTopLevelConstants(ast: acorn.Program): Map<string, any> {
+  const out = new Map<string, any>();
+  for (const node of ast.body) {
+    if (node.type !== 'VariableDeclaration')
+      continue;
+    if (node.kind !== 'const' && node.kind !== 'let')
+      continue;
+    for (const decl of node.declarations) {
+      if (decl.id.type !== 'Identifier' || !decl.init)
+        continue;
+      const value = evaluateExpressionToString(decl.init);
+      if (typeof value === 'string') {
+        out.set(decl.id.name, value);
+        continue;
+      }
+      // Also accept literal numbers/booleans for completeness.
+      if (decl.init.type === 'Literal' && (typeof decl.init.value === 'number' || typeof decl.init.value === 'boolean'))
+        out.set(decl.id.name, decl.init.value);
+    }
+  }
+  return out;
+}
+
 const argsParser = (arg: acorn.Expression | acorn.SpreadElement | null): any => {
   if (arg === null)
     return arg;
@@ -173,12 +253,36 @@ const argsParser = (arg: acorn.Expression | acorn.SpreadElement | null): any => 
   switch (arg.type) {
     case 'Literal':
       return arg.value;
-    case 'TemplateLiteral':
-      if (arg.quasis.length !== 1)
-        parserError('Invalid template literal', arg.loc);
+    case 'TemplateLiteral': {
+      // Resolve interpolation against top-level constants when possible.
+      if (arg.expressions.length > 0) {
+        const resolved = evaluateExpressionToString(arg);
+        if (resolved !== undefined)
+          return resolved;
+        parserError('Cannot resolve template literal — interpolation references a non-constant value', arg.loc);
+      }
       const templateLiteral = arg.quasis[0].value.cooked ?? '';
       const indent = templateLiteral.split(/\r?\n/).filter(Boolean)[0]?.match(/^( +)[^ ]/)?.[1] ?? '';
       return templateLiteral.replace(new RegExp(`^${indent}`, 'gm'), '').trim();
+    }
+    case 'Identifier': {
+      const v = _constants.get(arg.name);
+      if (v !== undefined)
+        return v;
+      parserError(`Cannot resolve identifier "${arg.name}" — declare it as a top-level const with a literal/process.env-fallback value`, arg.loc);
+    }
+    case 'BinaryExpression': {
+      const v = evaluateExpressionToString(arg);
+      if (v !== undefined)
+        return v;
+      parserError('Cannot resolve binary expression at parse time', arg.loc);
+    }
+    case 'LogicalExpression': {
+      const v = evaluateExpressionToString(arg);
+      if (v !== undefined)
+        return v;
+      parserError('Cannot resolve logical expression at parse time', arg.loc);
+    }
     case 'ArrayExpression':
       return arg.elements.map(argsParser);
     case 'UnaryExpression':
@@ -186,7 +290,7 @@ const argsParser = (arg: acorn.Expression | acorn.SpreadElement | null): any => 
         parserError('Invalid number', arg.loc);
       return -((arg.argument as acorn.Literal).value as number);
     case 'ObjectExpression':
-      if (arg.properties.some(p => p.type !== 'Property' || p.key.type !== 'Identifier' || !['Literal', 'ObjectExpression', 'ArrayExpression', 'UnaryExpression'].includes(p.value.type)))
+      if (arg.properties.some(p => p.type !== 'Property' || p.key.type !== 'Identifier' || !['Literal', 'ObjectExpression', 'ArrayExpression', 'UnaryExpression', 'TemplateLiteral', 'Identifier', 'BinaryExpression', 'LogicalExpression'].includes(p.value.type)))
         parserError('Invalid object property', arg.loc);
       return Object.fromEntries(arg.properties.map(p => p as acorn.Property)
           .map(p => [(p.key as acorn.Identifier).name, argsParser(p.value)]));
@@ -199,6 +303,10 @@ export function parse(code: string, file: string = 'playwright-test') {
     sourceType: 'module',
     locations: true,
   });
+
+  // Snapshot top-level const/let declarations so argsParser can resolve
+  // identifiers like BASE_URL inside `await page.goto(BASE_URL + '/login')`.
+  _constants = collectTopLevelConstants(ast);
 
   function parseActionExpression(expr: AwaitExpression | acorn.VariableDeclaration, pages: Set<string>): ExtendedActionInContextWithLocation {
     let pageAlias: string | undefined;

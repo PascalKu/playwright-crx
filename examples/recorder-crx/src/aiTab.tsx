@@ -47,6 +47,8 @@ export type AiTabProps = {
 export const AiTab: React.FC<AiTabProps> = ({ hasApiKey, getCurrentScript }) => {
   const [turns, setTurns] = React.useState<Turn[]>([]);
   const [input, setInput] = React.useState('');
+  const [failureText, setFailureText] = React.useState('');
+  const [showFailureBox, setShowFailureBox] = React.useState(false);
   const portRef = React.useRef<chrome.runtime.Port | null>(null);
   const turnIdRef = React.useRef(0);
   const activeTurnIdRef = React.useRef<number | null>(null);
@@ -92,20 +94,38 @@ export const AiTab: React.FC<AiTabProps> = ({ hasApiKey, getCurrentScript }) => 
 
   const onSubmit = React.useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    const prompt = input.trim();
-    if (!prompt || isRunning)
+    const userInstruction = input.trim();
+    const failure = failureText.trim();
+    if (!userInstruction && !failure)
+      return;
+    if (isRunning)
       return;
     if (!hasApiKey)
       return;
 
+    let prompt: string;
+    if (failure) {
+      // Wrap as a structured fix request — the agent has a dedicated workflow for this.
+      const userPart = userInstruction ? userInstruction : 'Fix it so the test passes.';
+      prompt = `FIX_FROM_FAILURE\n\nThe Playwright test below is failing in CI. Failure output:\n\n\`\`\`\n${failure}\n\`\`\`\n\nUser note: ${userPart}`;
+    } else {
+      prompt = userInstruction;
+    }
+
+    const displayPrompt = failure
+      ? (userInstruction || 'Fix the failing test')  + `\n[+ pasted ${failure.split('\n').length} line failure log]`
+      : userInstruction;
+
     const id = ++turnIdRef.current;
     activeTurnIdRef.current = id;
-    setTurns(prev => [...prev, { id, prompt, items: [], status: 'streaming', startedAt: Date.now() }]);
+    setTurns(prev => [...prev, { id, prompt: displayPrompt, items: [], status: 'streaming', startedAt: Date.now() }]);
     setInput('');
+    setFailureText('');
+    setShowFailureBox(false);
 
     const port = ensurePort();
     port.postMessage({ type: 'ai', method: 'run', prompt, currentScript: getCurrentScript() });
-  }, [input, isRunning, ensurePort, getCurrentScript, hasApiKey]);
+  }, [input, failureText, isRunning, ensurePort, getCurrentScript, hasApiKey]);
 
   const onCancel = React.useCallback(() => {
     if (!isRunning)
@@ -133,8 +153,8 @@ export const AiTab: React.FC<AiTabProps> = ({ hasApiKey, getCurrentScript }) => 
             <p>Describe what you want to test. The AI will drive the page; the recorder captures the actions live.</p>
             <ul>
               <li>{'“Go to https://example.com and click the Sign in button”'}</li>
-              <li>{'“Search for ‘aiploya.com’ and verify the price shows €23,97”'}</li>
-              <li>{'“Also assert that an Alternative Domains list contains aiploya.de”'}</li>
+              <li>{'“Log in as the admin user and verify the dashboard loads”'}</li>
+              <li>{'“Add the first item from the catalog to the cart and check the badge shows 1”'}</li>
             </ul>
           </div>
         )}
@@ -155,9 +175,35 @@ export const AiTab: React.FC<AiTabProps> = ({ hasApiKey, getCurrentScript }) => 
           }}
           rows={3}
         />
+        {showFailureBox && (
+          <textarea
+            className='ai-failure'
+            value={failureText}
+            placeholder='Paste the Playwright test failure output here. Press Send and the AI will diagnose and replaceTest with a fix.'
+            disabled={!hasApiKey}
+            onChange={e => setFailureText(e.target.value)}
+            rows={6}
+          />
+        )}
         <div className='ai-actions'>
+          <button
+            type='button'
+            className='clear'
+            title='Toggle failure-context box for "Fix from CI error" workflow'
+            disabled={!hasApiKey || isRunning}
+            onClick={() => setShowFailureBox(v => !v)}
+          >
+            {showFailureBox ? '− Failure' : '+ Failure'}
+          </button>
+          <div style={{ flex: 1 }} />
           {!isRunning ? (
-            <button type='submit' disabled={!hasApiKey || !input.trim()}>Send</button>
+            <button
+              type='submit'
+              disabled={!hasApiKey || (!input.trim() && !failureText.trim())}
+              title={failureText.trim() ? 'Send fix request (will diagnose the failure log)' : 'Send'}
+            >
+              {failureText.trim() ? 'Fix' : 'Send'}
+            </button>
           ) : (
             <button type='button' className='cancel' onClick={onCancel}>Stop</button>
           )}

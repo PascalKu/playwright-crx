@@ -155,6 +155,113 @@ export const CLAUDE_TOOLS: ClaudeTool[] = [
     },
   },
   {
+    name: 'hover',
+    description: 'Hover the mouse over the target element. Useful for revealing tooltips, dropdown menus, hover-only action buttons.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: targetSchema,
+        timeoutMs: { type: 'number', description: 'Default 5000.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'selectOption',
+    description: 'Select option(s) in a <select> dropdown by visible label OR value. Pass a single string for one option, an array for multi-select.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: targetSchema,
+        value: { type: 'string', description: 'Single option label or value to select.' },
+        values: { type: 'array', items: { type: 'string' }, description: 'Multiple option labels/values for multi-select. Use either value or values.' },
+        timeoutMs: { type: 'number' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'check',
+    description: 'Check a checkbox or radio button.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: targetSchema,
+        timeoutMs: { type: 'number' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'uncheck',
+    description: 'Uncheck a checkbox.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: targetSchema,
+        timeoutMs: { type: 'number' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'getText',
+    description: 'Read the visible (innerText) text of the target element. Use to verify content without dumping a full ARIA snapshot.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: targetSchema,
+        timeoutMs: { type: 'number', description: 'Default 5000.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'getValue',
+    description: 'Read the current value of an input/textarea/select. Useful for verifying form state before/after actions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: targetSchema,
+        timeoutMs: { type: 'number' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'waitForUrl',
+    description: 'Wait until the page URL matches a pattern. Use after a login or any redirecting click to confirm the expected destination before continuing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'A glob (e.g. "**/dashboard"), an exact URL, or a regex string starting and ending with "/" (e.g. "/\\\\/dashboard$/").' },
+        timeoutMs: { type: 'number', description: 'Default 10000.' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'reload',
+    description: 'Reload the current page.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        waitUntil: { type: 'string', enum: ['load', 'domcontentloaded', 'networkidle'], description: 'Optional load condition. Default: load.' },
+      },
+    },
+  },
+  {
+    name: 'evaluate',
+    description: 'Run a JavaScript expression in the page context and return its JSON-serializable result. Escape hatch for reading state that ARIA / inputs do not expose. Keep expressions short and side-effect-free; prefer the dedicated tools when they suffice.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        expression: { type: 'string', description: 'A JavaScript expression or arrow-function body. Examples: "document.title", "() => location.pathname", "() => document.cookie".' },
+      },
+      required: ['expression'],
+    },
+  },
+  {
     name: 'assertVisible',
     description: 'Assert the target element is visible (recorded as an assertion).',
     input_schema: {
@@ -307,6 +414,22 @@ async function attachSideEffects(page: Page, ctx: ExecutionContext, value: any):
   return out;
 }
 
+function parseUrlPattern(pattern: string): string | RegExp {
+  const trimmed = pattern.trim();
+  // Recognise /…/ as a regex literal.
+  if (trimmed.length >= 2 && trimmed.startsWith('/') && trimmed.lastIndexOf('/') > 0) {
+    const lastSlash = trimmed.lastIndexOf('/');
+    const body = trimmed.slice(1, lastSlash);
+    const flags = trimmed.slice(lastSlash + 1);
+    try {
+      return new RegExp(body, flags);
+    } catch {
+      // fall through, treat as literal
+    }
+  }
+  return trimmed;
+}
+
 function describeTarget(spec: LocatorSpec): string {
   switch (spec.by) {
     case 'role': return `role="${spec.value}"${spec.name ? ` name="${spec.name}"` : ''}`;
@@ -400,6 +523,83 @@ export async function executeTool(name: string, input: any, ctx: ExecutionContex
         }
         return { ok: true, value: await attachSideEffects(page, ctx, { ok: true }) };
       }
+      case 'hover': {
+        const target = validateSpec(input.target);
+        await resolve(page, target).hover({ timeout: input?.timeoutMs ?? 5000 });
+        return { ok: true, value: await attachSideEffects(page, ctx, { ok: true }) };
+      }
+      case 'selectOption': {
+        const target = validateSpec(input.target);
+        const timeout = input?.timeoutMs ?? 5000;
+        let values: string | string[] | undefined;
+        if (Array.isArray(input?.values))
+          values = input.values.map((v: any) => String(v));
+        else if (typeof input?.value === 'string')
+          values = input.value;
+        if (values === undefined)
+          return { ok: false, error: 'selectOption requires either `value` (string) or `values` (string[]).' };
+        const selected = await resolve(page, target).selectOption(values, { timeout });
+        return { ok: true, value: await attachSideEffects(page, ctx, { ok: true, selected }) };
+      }
+      case 'check': {
+        const target = validateSpec(input.target);
+        await resolve(page, target).check({ timeout: input?.timeoutMs ?? 5000 });
+        return { ok: true, value: await attachSideEffects(page, ctx, { ok: true }) };
+      }
+      case 'uncheck': {
+        const target = validateSpec(input.target);
+        await resolve(page, target).uncheck({ timeout: input?.timeoutMs ?? 5000 });
+        return { ok: true, value: await attachSideEffects(page, ctx, { ok: true }) };
+      }
+      case 'getText': {
+        const target = validateSpec(input.target);
+        const timeout = input?.timeoutMs ?? 5000;
+        const loc = resolve(page, target);
+        await loc.waitFor({ state: 'visible', timeout });
+        const text = ((await loc.innerText({ timeout })) ?? '').trim();
+        return { ok: true, value: { text: text.length > 4000 ? text.slice(0, 4000) + '…' : text, length: text.length } };
+      }
+      case 'getValue': {
+        const target = validateSpec(input.target);
+        const timeout = input?.timeoutMs ?? 5000;
+        const loc = resolve(page, target);
+        const value = await loc.inputValue({ timeout });
+        return { ok: true, value: { value } };
+      }
+      case 'waitForUrl': {
+        const pattern = String(input.pattern);
+        const timeout = input?.timeoutMs ?? 10000;
+        const matcher = parseUrlPattern(pattern);
+        await page.waitForURL(matcher as any, { timeout });
+        return { ok: true, value: { url: page.url() } };
+      }
+      case 'reload': {
+        await page.reload({ waitUntil: input?.waitUntil ?? 'load' });
+        return { ok: true, value: await attachSideEffects(page, ctx, { url: page.url() }) };
+      }
+      case 'evaluate': {
+        const expr = String(input.expression ?? '').trim();
+        if (!expr)
+          return { ok: false, error: 'evaluate requires a non-empty `expression`.' };
+        // Wrap in an arrow function so plain expressions like `document.title` work.
+        const wrapped = expr.startsWith('(') || expr.startsWith('function') || expr.startsWith('async') ? expr : `() => (${expr})`;
+        try {
+          const fn = new Function(`return (${wrapped})`)();
+          const result = await page.evaluate(fn);
+          let serialized: any;
+          try {
+            serialized = JSON.parse(JSON.stringify(result));
+          } catch {
+            serialized = String(result);
+          }
+          const stringified = JSON.stringify(serialized);
+          if (stringified && stringified.length > 4000)
+            return { ok: true, value: { result: serialized, truncated: false, note: `Result is ${stringified.length} chars; consider scoping the expression smaller.` } };
+          return { ok: true, value: { result: serialized } };
+        } catch (e: any) {
+          return { ok: false, error: `evaluate failed: ${e?.message ?? String(e)}` };
+        }
+      }
       case 'assertVisible': {
         const target = validateSpec(input.target);
         const loc = resolve(page, target);
@@ -460,7 +660,7 @@ export async function executeTool(name: string, input: any, ctx: ExecutionContex
     // Enrich action-tool failures with the current page state so the agent
     // can self-correct on the next iteration without burning a full
     // getAriaSnapshot round-trip.
-    if (page && ['click', 'fill', 'press', 'waitForSelector'].includes(name)) {
+    if (page && ['click', 'fill', 'press', 'waitForSelector', 'hover', 'selectOption', 'check', 'uncheck', 'getText', 'getValue'].includes(name)) {
       try {
         const snap = await page.locator('body').first().ariaSnapshot({ timeout: 2000 });
         const truncated = snap.length > 1500 ? snap.slice(0, 1500) + '\n…(truncated)' : snap;
@@ -483,7 +683,13 @@ export const SYSTEM_PROMPT = `You are an in-browser test recording assistant. Th
 
 CRITICAL: TWO MENTAL MODELS
 You operate in two layers, do not confuse them:
-1. **EXECUTION layer (live page).** click/fill/press/goto/waitForSelector/getAriaSnapshot/assertVisible/assertText drive the real browser tab. The recorder is ACTIVE while you act, so every goto/click/fill/press you perform is captured into the user's test script live (the user is watching it grow). Read-only ops (getAriaSnapshot, getUrl, waitForSelector, assertVisible, assertText) do not produce recorded steps.
+1. **EXECUTION layer (live page).** Tools available:
+   - Navigation: \`goto\`, \`reload\`, \`getUrl\`, \`waitForUrl\`
+   - Interaction: \`click\`, \`fill\`, \`press\`, \`hover\`, \`selectOption\`, \`check\`, \`uncheck\`
+   - Read state: \`getAriaSnapshot\`, \`getText\`, \`getValue\`, \`evaluate\`, \`getNotifications\`, \`getNetworkErrors\`
+   - Waiting: \`waitForSelector\`, \`waitForUrl\`
+   - Recording-bound assertions: \`assertVisible\`, \`assertText\`
+   By default the recorder is **paused** while you work — your tool calls are NOT live-recorded into the user's test source. The user only sees what you write via \`replaceTest\`.
 2. **AUTHORING layer (final script).** You finalize the user's deliverable by calling \`replaceTest\` with the complete clean script. The live recording is your scratchpad; \`replaceTest\` is the curated deliverable.
 
 WORKFLOW
@@ -500,11 +706,35 @@ WORKFLOW
    - Include screenshot calls (\`page.screenshot({ path: '...', fullPage: true })\`) right after verification of the depicted state.
 4. Call \`finish\` with a one-line summary AFTER your final \`replaceTest\`.
 
+FIX_FROM_FAILURE — when the user prompt starts with the literal token \`FIX_FROM_FAILURE\` (the panel sends this when the user pasted a Playwright failure log)
+The user has run \`npx playwright test\` (or equivalent) and a step has failed. Your job is to repair the existing test so it passes the next time it's run. The "Current generated script" is the test that needs fixing.
+
+Workflow for FIX_FROM_FAILURE:
+1. **Read the failure log carefully.** Identify:
+   - Which step failed (line number and which Playwright API: \`getByRole\`, \`getByText\`, \`fill\`, etc.).
+   - The error category: timeout (selector miss), strict-mode violation (multiple matches), timing (assertion ran too early), navigation/redirect mismatch, network error, assertion mismatch.
+   - The locator/argument used.
+2. **Reproduce the relevant page state.** Navigate (\`goto\`, \`reload\`) and run the test's steps up to the failing one. You can stop short of the failure — you only need the page in the state where the failure occurred.
+3. **Diagnose at the failure point.** Use \`getAriaSnapshot\` / \`getText\` / \`getNetworkErrors\` / \`getNotifications\` / \`evaluate\` to understand what's actually on the page vs what the test expected. Common findings:
+   - The visible label / placeholder / role-name has changed (UI rename).
+   - Multiple matches now exist (need scoping to a parent).
+   - The element is behind a hover / dismiss-cookie banner / modal that needs to be opened first.
+   - The navigation expected isn't happening (form stays on /login due to a 401 you can see in networkErrors).
+   - A success toast appears but disappears before the next step runs (need toContainText assertion right after the action).
+4. **Apply the smallest fix that makes the test correct.** Do NOT rewrite the test from scratch unless the original logic is fundamentally wrong. Common fixes:
+   - Update the selector (label/role/text) to match the new UI.
+   - Add scoping (\`page.getByRole('navigation').getByRole('button', { name: 'X' })\`).
+   - Add a missing wait (\`await expect(...).toBeVisible()\` before interacting).
+   - Add a missing dismissal step (cookie banner, welcome modal, …).
+   - Replace a brittle assertion with a more robust one.
+5. **Call \`replaceTest\` with the corrected full test.** Then \`finish\` with a one-line summary of WHAT changed and WHY. Do NOT just say "fixed it" — name the cause: "Renamed selector 'Anmelden' → 'Login' in step 4 to match the new UI label."
+6. If the failure is structural (the feature being tested is gone, the URL has migrated, etc.), do NOT guess a fix. Tell the user via finish: "The test refers to /old-path which redirects to /new-path; please confirm whether to update the test or the application."
+
 REPLACETEST RULES (this is the deliverable the user actually sees):
-- Always start with \`import { test, expect } from '@playwright/test';\` followed by a single \`test('<descriptive name>', async ({ page }) => { ... })\` block. Use a meaningful descriptive name in present tense ("admin can log in", "search returns aiploya.de"), never \`'test'\`.
+- Always start with \`import { test, expect } from '@playwright/test';\` followed by a single \`test('<descriptive name>', async ({ page }) => { ... })\` block. Use a meaningful descriptive name in present tense ("admin can log in", "search returns the expected results"), never \`'test'\`.
 - Include only the steps the user asked for. NO right-clicks, NO press('Tab'), NO redundant clicks on the same element, NO goto('/') back to home unless explicitly requested.
 - Use \`page.getByRole(...)\`, \`page.getByPlaceholder(...)\`, \`page.getByLabel(...)\`, \`page.getByText(...)\`, \`page.getByTestId(...)\` — never long auto-generated div locators or filter chains.
-- For multi-domain checks (e.g. "also try aiploya-new.com"), reuse the same locators with \`fill\` / \`expect\` rather than reloading the page when avoidable.
+- For repeated checks across multiple inputs (e.g. "verify each plan"), reuse the same locators with \`fill\` / \`expect\` rather than reloading the page when avoidable.
 - Match the language of the existing script if one is provided.
 
 ASSERTION GUIDANCE
@@ -530,7 +760,11 @@ await page.screenshot({ path: 'screenshots/admin-dashboard.png', fullPage: true 
 - Do NOT call screenshot at runtime via the execution tools; only emit \`page.screenshot()\` calls in the final \`replaceTest\` script.
 
 PIPELINE-READY OUTPUT (CRITICAL: tests must run unchanged in CI against staging/prod, and locally against the dev server)
-- **Never hardcode the host. Use relative paths only:** \`await page.goto('/login')\`, \`await page.goto('/dashboard')\`. Do **NOT** introduce a \`const BASE_URL = process.env.BASE_URL ?? '...'\` and do **NOT** concatenate (\`BASE_URL + '/login'\`) — the recorder's replay player can only parse \`goto\` with a literal string argument; concatenation makes the action invisible to the player and "Play" in the recorder will appear to do nothing. Trust that the user has \`baseURL\` configured in \`playwright.config.ts\` — typically \`use: { baseURL: process.env.BASE_URL ?? 'http://localhost:3000' }\`. With that in place, relative paths work both locally and in CI without further wiring.
+- **Always declare a BASE_URL constant** at the top of the test, immediately after imports. Pull it from \`process.env.BASE_URL\` with the **"Suggested BASE_URL fallback"** from the user message as the local default (or \`http://localhost:3000\` if none was provided):
+  \`\`\`ts
+  const BASE_URL = process.env.BASE_URL ?? '<suggested-base-url>';
+  \`\`\`
+  Use it in goto either as a template literal (\`await page.goto(\`\${BASE_URL}/login\`)\`) OR plain concatenation (\`await page.goto(BASE_URL + '/login')\`). For the bare host, just \`await page.goto(BASE_URL)\`. The recorder's replay player can resolve all of these patterns at parse time, AND in CI \`BASE_URL\` is overridden via env var. Both worlds, one test source.
 - **Never hardcode credentials, API keys, or other secrets** in the test body. Pull them from \`process.env\` with the value the user mentioned as a *local-dev fallback only*, and clearly named:
   \`\`\`ts
   const ADMIN_EMAIL = process.env.TEST_ADMIN_EMAIL ?? 'max@itdpk.de';
