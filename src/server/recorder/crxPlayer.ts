@@ -218,8 +218,10 @@ export default class CrxPlayer extends EventEmitter {
       throw new Error('Internal error: page not found');
     const mainFrame = page.mainFrame();
 
-    if (action.name === 'navigate')
-      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.goto(callMetadata, action.url, { timeout: kActionTimeout }));
+    if (action.name === 'navigate') {
+      const url = await resolveNavigateUrl(action.url, context);
+      return await innerPerformAction(mainFrame, actionInContext, callMetadata => mainFrame.goto(callMetadata, url, { timeout: kActionTimeout }));
+    }
 
     if (action.name === 'closePage') {
       return await innerPerformAction(mainFrame, actionInContext, async callMetadata => {
@@ -303,5 +305,54 @@ export default class CrxPlayer extends EventEmitter {
       this._stopping.resolve();
       throw new Stopped();
     }
+  }
+}
+
+async function resolveNavigateUrl(url: string, context: any): Promise<string> {
+  // 1. Already absolute? Normalise + return.
+  try {
+    return new URL(url).toString();
+  } catch {
+    // Not a fully-qualified URL — fall through to base resolution.
+  }
+
+  // 2. Resolve against an origin we already have. Order of preference:
+  //    a) An existing real (non-blank, non-chrome) page in the same context
+  //    b) The user's "Local base URL" setting from preferences
+  //    c) Fail with a clear, actionable error.
+  let base: string | undefined;
+
+  try {
+    const pages: Array<{ url: () => string }> = (context?.pages?.() ?? []);
+    const existing = pages.find(p => {
+      const u = p.url();
+      return !!u && !u.startsWith('about:') && !u.startsWith('chrome://') && !u.startsWith('chrome-extension://');
+    });
+    if (existing)
+      base = new URL(existing.url()).origin;
+  } catch { /* ignore */ }
+
+  if (!base) {
+    try {
+      const settings = await chrome.storage.sync.get(['localBaseUrl']);
+      const lb = (settings as any)?.localBaseUrl;
+      if (typeof lb === 'string' && lb.trim())
+        base = lb.trim();
+    } catch { /* ignore */ }
+  }
+
+  if (!base) {
+    throw new Error(
+        `Cannot navigate to relative URL "${url}". The recorder's Play button has no baseURL — `
+      + `either (1) open a tab on your target host before pressing Play, `
+      + `(2) set "Local base URL" in the extension Preferences (default http://localhost:3000), `
+      + `or (3) edit the test to use an absolute URL.`,
+    );
+  }
+
+  try {
+    return new URL(url, base).toString();
+  } catch (e: any) {
+    throw new Error(`Could not resolve "${url}" against base "${base}": ${e?.message ?? e}`);
   }
 }

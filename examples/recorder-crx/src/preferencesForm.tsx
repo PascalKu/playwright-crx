@@ -41,6 +41,7 @@ export const PreferencesForm: React.FC = ({}) => {
       initialSettings.claudeModel !== settings.claudeModel ||
       initialSettings.aiMaxSteps !== settings.aiMaxSteps ||
       initialSettings.aiMaxTokens !== settings.aiMaxTokens ||
+      initialSettings.aiPauseRecorder !== settings.aiPauseRecorder ||
       initialSettings.localBaseUrl !== settings.localBaseUrl;
   }, [settings, initialSettings]);
 
@@ -166,6 +167,17 @@ export const PreferencesForm: React.FC = ({}) => {
         onChange={e => setSettings({ ...settings, aiMaxTokens: Math.max(1024, Math.min(32000, Number(e.target.value) || 8192)) })}
       />
       <div className='note'>Bigger = the AI can write longer test scripts in one shot, but more wall-clock time per response. 8192 is fine for most tests; raise to 16384+ if your tests are very long.</div>
+      <div>
+        <label htmlFor='aiPauseRecorder' className='row'>Pause recorder while AI is working:</label>
+        <input
+          type='checkbox'
+          id='aiPauseRecorder'
+          name='aiPauseRecorder'
+          checked={settings.aiPauseRecorder !== false}
+          onChange={e => setSettings({ ...settings, aiPauseRecorder: e.target.checked })}
+        />
+      </div>
+      <div className='note'>{`On (default): the AI's clicks/fills don't pollute the recorder source. The script in the Locator tab only changes when the AI calls `}<code>replaceTest</code>{`. Off: every AI action is captured live (more visual feedback, more noise).`}</div>
       <label htmlFor='localBaseUrl'>Local base URL (used as fallback in generated tests):</label>
       <input
         type='text'

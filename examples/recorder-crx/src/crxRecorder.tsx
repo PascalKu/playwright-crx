@@ -57,6 +57,20 @@ function generateDatetimeSuffix() {
       .replace('T', '-');
 }
 
+const TEST_RUNNER_GUTTER = 'crx-test-runner';
+
+function findTestLines(code: string): number[] {
+  const out: number[] = [];
+  const lines = code.split('\n');
+  // Match `test(...)`, `test.only(...)`, `test.skip(...)`, `test.serial(...)` etc.
+  const re = /^\s*test(?:\.[a-zA-Z]+)?\s*\(/;
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i]))
+      out.push(i + 1);
+  }
+  return out;
+}
+
 const codegenFilenames: Record<string, string> = {
   'javascript': 'example.js',
   'playwright-test': 'example.spec.ts',
@@ -202,6 +216,38 @@ export const CrxRecorder: React.FC = ({
     render: () => <AiTab hasApiKey={!!(settings.claudeApiKey && settings.claudeApiKey.trim())} getCurrentScript={getCurrentScript} />,
   }], [settings.claudeApiKey, getCurrentScript]);
 
+  const cmRef = React.useRef<any>(null);
+  const onCmReady = React.useCallback((cm: any) => {
+    cmRef.current = cm;
+    const existing: string[] = (cm.getOption('gutters') as string[]) ?? [];
+    if (!existing.includes(TEST_RUNNER_GUTTER))
+      cm.setOption('gutters', [TEST_RUNNER_GUTTER, ...existing.filter((g: string) => g !== TEST_RUNNER_GUTTER)]);
+  }, []);
+
+  React.useEffect(() => {
+    const cm = cmRef.current;
+    if (!cm)
+      return;
+    if (selectedFileId !== 'playwright-test') {
+      cm.clearGutter(TEST_RUNNER_GUTTER);
+      return;
+    }
+    const code = source?.text ?? '';
+    const lines = findTestLines(code);
+    cm.clearGutter(TEST_RUNNER_GUTTER);
+    for (const line of lines) {
+      const el = document.createElement('span');
+      el.className = 'codicon codicon-debug-start crx-run-test-icon';
+      el.title = 'Run this test';
+      el.addEventListener('mousedown', (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatch({ event: 'resume' }).catch(() => {});
+      });
+      cm.setGutterMarker(line - 1, TEST_RUNNER_GUTTER, el);
+    }
+  }, [source, selectedFileId]);
+
   return <>
     <ModalContainer />
 
@@ -220,7 +266,7 @@ export const CrxRecorder: React.FC = ({
           <ToolbarButton icon='settings-gear' title='Preferences' onClick={showPreferences}></ToolbarButton>
         </Toolbar>
       </>}
-      <Recorder sources={sources} paused={paused} log={log} mode={mode} onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} extraTabs={aiExtraTabs} />
+      <Recorder sources={sources} paused={paused} log={log} mode={mode} onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} onCmReady={onCmReady} extraTabs={aiExtraTabs} />
     </div>
   </>;
 };

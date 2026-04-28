@@ -1,6 +1,6 @@
 {
   "name": "Playwright CRX - TodoMVC",
-  "version": "0.15.23",
+  "version": "0.15.31",
   "manifest_version": 3,
   "background": {
     "service_worker": "background.js",

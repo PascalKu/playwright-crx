@@ -312,9 +312,18 @@ chrome.runtime.onConnect.addListener(port => {
       };
       try { (crxApp as any)?.context().on('page', onPageOpened); } catch { /* ignore */ }
 
-      // Keep the recorder in its current mode (typically 'recording') so the
-      // user can watch the test script grow live as the AI performs actions.
-      // The agent calls replaceTest() at the end to curate / clean the script.
+      // Optionally pause the recorder while the AI is working so its scratch
+      // clicks/fills don't pollute the recorder source. The agent then writes
+      // the test exclusively via replaceTest. Toggle in Preferences.
+      const recorder = crxApp?.recorder;
+      const previousMode = recorder?.mode();
+      const shouldPauseRecorder = settings.aiPauseRecorder !== false
+        && !!recorder
+        && previousMode !== 'standby'
+        && previousMode !== 'none';
+      if (recorder && shouldPauseRecorder)
+        await recorder.setMode('standby').catch(() => {});
+
       try {
         await runAgent({
           apiKey,
@@ -339,6 +348,8 @@ chrome.runtime.onConnect.addListener(port => {
           try { (p as any).off('requestfailed', onRequestFailed); } catch { /* ignore */ }
         }
         try { (crxApp as any)?.context().off('page', onPageOpened); } catch { /* ignore */ }
+        if (recorder && shouldPauseRecorder && previousMode)
+          await recorder.setMode(previousMode).catch(() => {});
       }
     } catch (e: any) {
       send({ kind: 'error', message: e?.message ?? String(e) });

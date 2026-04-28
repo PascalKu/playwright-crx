@@ -317,7 +317,7 @@ function buildInitialUserText(prompt: string, currentScript?: string, pageUrl?: 
   if (pageUrl)
     parts.push(`Current page URL: ${pageUrl}`);
   if (localBaseUrl)
-    parts.push(`Local base URL fallback (use as default for process.env.BASE_URL): ${localBaseUrl}`);
+    parts.push(`User's local-dev base URL (for context only — do NOT add a BASE_URL constant; use relative paths in goto): ${localBaseUrl}`);
   if (!isContinuation && currentScript && currentScript.trim()) {
     parts.push('Current generated script (the recorder will keep this in sync as you act):');
     parts.push('```');

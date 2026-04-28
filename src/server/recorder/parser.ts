@@ -420,7 +420,19 @@ export function parse(code: string, file: string = 'playwright-test') {
 
       for (const stmt of stmts) {
         const actionExpr = stmt.type === 'VariableDeclaration' ? stmt : stmt.expression as AwaitExpression;
-        const candidateAction = parseActionExpression(actionExpr, pages);
+        let candidateAction: ExtendedActionInContextWithLocation;
+        try {
+          candidateAction = parseActionExpression(actionExpr, pages);
+        } catch {
+          // Soft-skip statements the recorder cannot represent as one of its
+          // internal actions: assertions outside the whitelist (toBeDisabled,
+          // toHaveURL, toBeEnabled, …), `expect(page)` without a locator chain,
+          // `.not` on non-toBeChecked, inline `const x = process.env.…`,
+          // arbitrary helper logic. The test source remains intact in the
+          // editor — we just don't build a synthetic action for it. The test
+          // still runs unchanged via `npx playwright test`.
+          continue;
+        }
         if (candidateAction.action.name === 'routeFromHAR') {
           if (!(actions.length === 0 || (actions.length === 1 && actions[0].action.name === 'openPage')))
             parserError('routeFromHAR must be the first action', actionExpr.loc);

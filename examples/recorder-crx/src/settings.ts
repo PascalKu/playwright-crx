@@ -25,6 +25,7 @@ export type CrxSettings = {
   claudeModel?: ClaudeModelId;
   aiMaxSteps?: number;
   aiMaxTokens?: number;
+  aiPauseRecorder?: boolean;
   localBaseUrl?: string;
 };
 
@@ -38,6 +39,7 @@ export const defaultSettings: CrxSettings = {
   claudeModel: 'haiku',
   aiMaxSteps: 25,
   aiMaxTokens: 8192,
+  aiPauseRecorder: true,
   localBaseUrl: 'http://localhost:3000',
 };
 
@@ -51,6 +53,7 @@ const SETTINGS_KEYS = [
   'claudeModel',
   'aiMaxSteps',
   'aiMaxTokens',
+  'aiPauseRecorder',
   'localBaseUrl',
 ] as const;
 

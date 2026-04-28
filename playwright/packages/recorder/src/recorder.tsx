@@ -39,6 +39,7 @@ export interface RecorderProps {
   mode: Mode,
   onEditedCode?: (code: string) => any,
   onCursorActivity?: (position: { line: number }) => any,
+  onCmReady?: (cm: any) => any,
   extraTabs?: TabbedPaneTabModel[],
 }
 
@@ -49,6 +50,7 @@ export const Recorder: React.FC<RecorderProps> = ({
   mode,
   onEditedCode,
   onCursorActivity,
+  onCmReady,
   extraTabs,
 }) => {
   const [selectedFileId, setSelectedFileId] = React.useState<string | undefined>();
@@ -201,7 +203,7 @@ export const Recorder: React.FC<RecorderProps> = ({
     </Toolbar>
     <SplitView
       sidebarSize={200}
-      main={<CodeMirrorWrapper text={source.text} language={source.language} highlight={source.highlight} revealLine={source.revealLine} readOnly={source.id !== 'playwright-test'} onChange={onEditedCode} onCursorActivity={onCursorActivity} lineNumbers={true} />}
+      main={<CodeMirrorWrapper text={source.text} language={source.language} highlight={source.highlight} revealLine={source.revealLine} readOnly={source.id !== 'playwright-test'} onChange={onEditedCode} onCursorActivity={onCursorActivity} onCmReady={onCmReady} lineNumbers={true} />}
       sidebar={<TabbedPane
         rightToolbar={selectedTab === 'locator' || selectedTab === 'aria' ? [<ToolbarButton key={1} icon='files' title='Copy' onClick={() => copy((selectedTab === 'locator' ? locator : ariaSnapshot) || '')} />] : []}
         tabs={[

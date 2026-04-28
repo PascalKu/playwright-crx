@@ -1,3 +1,20 @@
+.crx-run-test-icon {
+  cursor: pointer;
+  color: var(--vscode-charts-green, #21a945);
+  padding: 0 4px 0 2px;
+  font-size: 14px;
+  line-height: 20px;
+  display: inline-block;
+  vertical-align: top;
+}
+.crx-run-test-icon:hover {
+  color: var(--vscode-charts-green, #21a945);
+  filter: brightness(1.25);
+}
+.CodeMirror-gutter.crx-test-runner {
+  width: 18px;
+}
+
 .dropdown {
   position: relative;
   display: inline-block;

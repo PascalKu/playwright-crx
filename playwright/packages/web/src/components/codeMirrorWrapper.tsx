@@ -46,6 +46,7 @@ export interface SourceProps {
   wrapLines?: boolean;
   onChange?: (text: string) => void;
   onCursorActivity?: (position: { line: number }) => void;
+  onCmReady?: (cm: CodeMirror.Editor) => void;
   dataTestId?: string;
   placeholder?: string;
 }
@@ -64,6 +65,7 @@ export const CodeMirrorWrapper: React.FC<SourceProps> = ({
   wrapLines,
   onChange,
   onCursorActivity,
+  onCmReady,
   dataTestId,
   placeholder,
 }) => {
@@ -113,9 +115,10 @@ export const CodeMirrorWrapper: React.FC<SourceProps> = ({
       if (isFocused)
         cm.focus();
       setCodemirror(cm);
+      onCmReady?.(cm);
       return cm;
     })();
-  }, [modulePromise, codemirror, codemirrorElement, language, mimeType, linkify, lineNumbers, wrapLines, readOnly, isFocused, placeholder]);
+  }, [modulePromise, codemirror, codemirrorElement, language, mimeType, linkify, lineNumbers, wrapLines, readOnly, isFocused, placeholder, onCmReady]);
 
   React.useEffect(() => {
     if (codemirrorRef.current)

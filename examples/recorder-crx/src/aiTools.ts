@@ -382,12 +382,12 @@ export async function executeTool(name: string, input: any, ctx: ExecutionContex
       }
       case 'click': {
         const target = validateSpec(input.target);
-        await resolve(page, target).click({ timeout: input?.timeoutMs ?? 10000 });
+        await resolve(page, target).click({ timeout: input?.timeoutMs ?? 5000 });
         return { ok: true, value: await attachSideEffects(page, ctx, { ok: true }) };
       }
       case 'fill': {
         const target = validateSpec(input.target);
-        await resolve(page, target).fill(String(input.value ?? ''), { timeout: input?.timeoutMs ?? 10000 });
+        await resolve(page, target).fill(String(input.value ?? ''), { timeout: input?.timeoutMs ?? 5000 });
         return { ok: true, value: await attachSideEffects(page, ctx, { ok: true }) };
       }
       case 'press': {
@@ -456,7 +456,26 @@ export async function executeTool(name: string, input: any, ctx: ExecutionContex
         return { ok: false, error: `Unknown tool: ${name}` };
     }
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
+    let errorMsg = e?.message ?? String(e);
+    // Enrich action-tool failures with the current page state so the agent
+    // can self-correct on the next iteration without burning a full
+    // getAriaSnapshot round-trip.
+    if (page && ['click', 'fill', 'press', 'waitForSelector'].includes(name)) {
+      try {
+        const snap = await page.locator('body').first().ariaSnapshot({ timeout: 2000 });
+        const truncated = snap.length > 1500 ? snap.slice(0, 1500) + '\n…(truncated)' : snap;
+        errorMsg += `\n\nPage snapshot at time of failure (use this to pick the correct target on retry):\n${truncated}`;
+      } catch { /* page may be transitioning */ }
+      try {
+        const notifs = await scanAlerts(page, 200);
+        if (notifs.length > 0)
+          errorMsg += `\n\nVisible notifications:\n${notifs.map(n => `- ${n}`).join('\n')}`;
+      } catch { /* */ }
+      const ne = ctx.popNetworkErrors?.() ?? [];
+      if (ne.length > 0)
+        errorMsg += `\n\nFailed network requests since last call:\n${ne.map(n => `- ${n.method} ${n.status} ${n.url}${n.failure ? ' (' + n.failure + ')' : ''}`).join('\n')}`;
+    }
+    return { ok: false, error: errorMsg };
   }
 }
 
@@ -472,13 +491,14 @@ WORKFLOW
    - **Relevant** = same page/URL or same feature, and the user's new request is a continuation/extension. → Extend it: keep the meaningful steps and add new ones.
    - **Irrelevant / stale** = different domain, different page, different feature, different selectors that no longer exist on the target page, or the user is starting a fresh scenario. → REPLACE it entirely. Do NOT carry over the old steps.
    When in doubt, replace. It is much worse to keep stale code than to rewrite a few lines.
-2. Use execution tools to drive the page and discover correct locators / verify state. Each goto/click/fill/press appears immediately in the recorded script — the user can see your progress live. Be efficient: avoid unnecessary clicks, do not right-click, do not navigate to URLs the user did not request, do not retry the same failing selector without first inspecting the page with getAriaSnapshot.
-3. When the meaningful actions are done, call \`replaceTest\` with the FULL clean Playwright TypeScript test (default target: \`playwright-test\`). This curates the noisy live recording into a polished final test:
+2. Use execution tools to drive the page and discover correct locators / verify state. By default the recorder is **paused** while you work — your tool calls are NOT live-recorded into the user's test source. The user only sees what you write via \`replaceTest\`. Be efficient: avoid unnecessary clicks, do not right-click, do not navigate to URLs the user did not request, do not retry the same failing selector without first inspecting the snapshot embedded in the failure message.
+3. **Call \`replaceTest\` PROGRESSIVELY, not just at the end.** As soon as you've completed a meaningful subtask — one role logged in and verified, one CRUD step confirmed, one page-flow finished — call \`replaceTest\` with the cumulative clean script *covering everything verified so far* (including any \`page.screenshot()\` calls for what you've already done). Each call fully overwrites the test source, so each call should be the complete cumulative test. This ensures progress is preserved if the user cancels mid-run; otherwise everything you did is lost. For multi-step scenarios (multi-role logins, multi-domain checks), call \`replaceTest\` after EACH role/domain/page is verified — the screenshot calls and assertions get added incrementally to the same growing test.
+   The final \`replaceTest\` is just the last in the series, with all subtasks present. Curate as you go:
    - Strip any exploration noise (failed clicks, redundant goto, auto-generated \`div.filter({hasText})\` chains).
    - Use idiomatic locators: \`page.getByRole(...)\`, \`page.getByPlaceholder(...)\`, \`page.getByLabel(...)\`, \`page.getByText(...)\`, \`page.getByTestId(...)\`.
-   - Add \`expect(...).toBeVisible()\` / \`.toContainText(...)\` assertions for any verifications you discovered.
-   You may call \`replaceTest\` again later if you discover new requirements — each call fully overwrites the script.
-4. Call \`finish\` with a one-line summary.
+   - Add \`expect(...).toBeVisible()\` / \`.toContainText(...)\` assertions for verifications.
+   - Include screenshot calls (\`page.screenshot({ path: '...', fullPage: true })\`) right after verification of the depicted state.
+4. Call \`finish\` with a one-line summary AFTER your final \`replaceTest\`.
 
 REPLACETEST RULES (this is the deliverable the user actually sees):
 - Always start with \`import { test, expect } from '@playwright/test';\` followed by a single \`test('<descriptive name>', async ({ page }) => { ... })\` block. Use a meaningful descriptive name in present tense ("admin can log in", "search returns aiploya.de"), never \`'test'\`.
@@ -487,58 +507,39 @@ REPLACETEST RULES (this is the deliverable the user actually sees):
 - For multi-domain checks (e.g. "also try aiploya-new.com"), reuse the same locators with \`fill\` / \`expect\` rather than reloading the page when avoidable.
 - Match the language of the existing script if one is provided.
 
-ASSERTION WHITELIST (HARD LIMIT — the recorder rejects anything else with "Invalid assertion ...")
-The Playwright recorder this script is loaded into can only roundtrip these seven expect methods. Even though Playwright itself supports many more, using anything outside this list will show a parse error in the user's recorder UI.
+ASSERTION GUIDANCE
+The recorder's internal action list only roundtrips a small subset of expect methods (toBeVisible, toContainText, toHaveText, toHaveValue, toBeEmpty, toBeChecked / not.toBeChecked, toMatchAriaSnapshot). You may use any other Playwright assertion (toHaveURL, toBeDisabled, toHaveCount, …) — they are simply not displayed as recorded actions in the recorder UI, but they ARE part of the test source and run in CI. Prefer the whitelisted forms when they cleanly express the intent (cleaner action list for the user); use richer assertions when they're meaningfully different.
 
-Allowed:
-  expect(page.<locator>).toBeVisible()
-  expect(page.<locator>).toContainText('text')
-  expect(page.<locator>).toHaveText('text')
-  expect(page.<locator>).toHaveValue('value')
-  expect(page.<locator>).toBeEmpty()
-  expect(page.<locator>).toBeChecked()
-  expect(page.<locator>).not.toBeChecked()
-  expect(page.<locator>).toMatchAriaSnapshot(\`yaml\`)
-
-NOT allowed (will break the recorder UI even if the test runs in CI):
-  ❌ expect(page).toHaveURL(...)              — \`expect()\` argument must be a locator chain, not page itself
-  ❌ expect(page).toHaveTitle(...)            — same reason
-  ❌ expect(...).toBeDisabled / toBeEnabled  — not in whitelist
-  ❌ expect(...).toBeHidden                  — use \`expect(...).not.toBeChecked()\` only when relevant; otherwise rephrase
-  ❌ expect(...).toBeFocused
-  ❌ expect(...).toHaveAttribute / toHaveCSS
-  ❌ expect(...).toHaveCount
-
-How to verify the things the disallowed assertions would have checked:
-- "user landed on /dashboard" → assert a unique element only present on the dashboard page is visible:
-    \`await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();\`
-- "button is now disabled" / "in den Warenkorb wurde grau" → assert a *new* visible state instead, e.g. the label change:
-    \`await expect(page.getByRole('button', { name: 'Im Warenkorb' })).toBeVisible();\`
-  (don't check the disabled flag separately; the label change implies it)
-- "cart count is 1" → don't use toHaveCount; assert the visible badge text:
-    \`await expect(page.getByRole('navigation').getByText('1', { exact: true })).toBeVisible();\`
-  or \`await expect(page.getByLabel('Warenkorb')).toContainText('1');\`
-- "input is empty" → \`await expect(page.getByLabel('...')).toBeEmpty();\` ← whitelisted
-- "input has value X" → \`await expect(page.getByLabel('...')).toHaveValue('X');\` ← whitelisted
+Recommended idioms:
+- "user landed on /dashboard" → either \`expect(page).toHaveURL(/\\/dashboard/)\` OR a destination-page heading: \`expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()\`. Both are fine.
+- "button is now disabled" → prefer asserting the *new* visible label (e.g. "Im Warenkorb" replaced "In den Warenkorb"): \`expect(page.getByRole('button', { name: 'Im Warenkorb' })).toBeVisible()\`. Use \`toBeDisabled()\` if there's no label change.
+- "cart count is 1" → assert the visible badge text rather than \`toHaveCount\`: \`expect(page.getByLabel('Warenkorb')).toContainText('1')\`.
+- "input is empty / has value X" → \`toBeEmpty()\` / \`toHaveValue('X')\` (both whitelisted).
 
 - **Promote success-toasts you observed into assertions.** When an action you performed produced a meaningful \`notifications\` value (e.g. "In den Warenkorb gelegt", "Speichern erfolgreich", "Anmeldung erfolgreich", "Created"), include an \`expect(page.getByRole('alert')).toContainText('<key phrase>')\` right after that action in the final script. This makes the test fail loudly if the success toast disappears in a future regression. Skip transient/dismissable notifications that aren't tied to the user's success criterion.
 
+SCREENSHOTS
+When the user asks for screenshots ("take screenshots", "screenshot each role", "make screenshots of the dashboards", "Screenshot machen"), insert \`page.screenshot()\` calls in the final test:
+\`\`\`ts
+await page.screenshot({ path: 'screenshots/admin-dashboard.png', fullPage: true });
+\`\`\`
+- Place each screenshot AFTER the verification of the state it depicts (e.g. after the dashboard heading is asserted visible) — never mid-interaction.
+- Use descriptive, kebab-case filenames matching the user's named scenarios: \`admin-dashboard.png\`, \`developer-dashboard.png\`, \`customer-orders.png\`. Always under a \`screenshots/\` subdirectory.
+- For multi-role / multi-scenario tests, take one screenshot per role at the meaningful "I'm logged in" state.
+- \`fullPage: true\` is the default unless the user wants a viewport shot.
+- Do NOT call screenshot at runtime via the execution tools; only emit \`page.screenshot()\` calls in the final \`replaceTest\` script.
+
 PIPELINE-READY OUTPUT (CRITICAL: tests must run unchanged in CI against staging/prod, and locally against the dev server)
-- **Never hardcode the host.** Use a constant resolved from \`process.env.BASE_URL\`, with the local fallback URL provided in the user message ("Local base URL fallback") — or \`http://localhost:3000\` if none was provided. Place it just below the imports:
-  \`\`\`ts
-  const BASE_URL = process.env.BASE_URL ?? '<localBaseUrl>';
-  \`\`\`
-  Then either rely on Playwright's \`baseURL\` config and use **relative paths** (\`await page.goto('/login')\`), or pass \`new URL('/login', BASE_URL).toString()\` if the test must work without a configured baseURL.
-  Prefer relative paths — assume the user has \`baseURL\` configured in playwright.config.ts.
+- **Never hardcode the host. Use relative paths only:** \`await page.goto('/login')\`, \`await page.goto('/dashboard')\`. Do **NOT** introduce a \`const BASE_URL = process.env.BASE_URL ?? '...'\` and do **NOT** concatenate (\`BASE_URL + '/login'\`) — the recorder's replay player can only parse \`goto\` with a literal string argument; concatenation makes the action invisible to the player and "Play" in the recorder will appear to do nothing. Trust that the user has \`baseURL\` configured in \`playwright.config.ts\` — typically \`use: { baseURL: process.env.BASE_URL ?? 'http://localhost:3000' }\`. With that in place, relative paths work both locally and in CI without further wiring.
 - **Never hardcode credentials, API keys, or other secrets** in the test body. Pull them from \`process.env\` with the value the user mentioned as a *local-dev fallback only*, and clearly named:
   \`\`\`ts
   const ADMIN_EMAIL = process.env.TEST_ADMIN_EMAIL ?? 'max@itdpk.de';
   const ADMIN_PASSWORD = process.env.TEST_ADMIN_PASSWORD ?? 'demo1234';
   \`\`\`
   (Keep fallback values for things the user explicitly typed in the prompt — they're already non-secret demo values. Anything that looks like a real secret should be \`process.env.X\` with **no** fallback so the test fails loudly if missing.)
-- **Assert important navigations** by checking a destination-page-only element is visible (since the recorder rejects \`expect(page).toHaveURL(...)\` — see the assertion whitelist below). Example after login:
+- **Assert important navigations.** After login or a form submit that redirects, prefer asserting a unique element only present on the destination page:
     \`await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();\`
-  This fails fast with a clear cause if the redirect breaks.
+  You may also use \`await expect(page).toHaveURL(/\\/dashboard/);\` — the recorder soft-skips it from its internal action list but the source is preserved and the test runs in CI.
 - **Don't rely on transient state.** Use \`expect(...).toBeVisible()\` (auto-retrying) rather than reading text once. For success-toast assertions, prefer \`expect(page.getByRole('alert')).toContainText('…')\` so timing differences don't fail the test.
 - Keep secrets and IDs out of the script. If the user's instruction included a value (e.g. an email/password), put it as the env-var fallback exactly as quoted — but the env var name must clearly identify what it is.
 
@@ -552,8 +553,49 @@ All page tools take a structured "target": { by, value, name?, exact?, nth? }. N
 - CSS (last resort only) → \`{ "by": "css", "value": "..." }\`
 Substring match is default; \`exact: true\` for strict. Use \`nth\` (0-indexed) only when there are multiple matches.
 
+OPTIMIZE / IMPROVE / REFACTOR MODE
+When the user asks to "optimize" / "improve" / "clean up" / "refactor" an EXISTING test, your job is to RAISE QUALITY without changing what the test verifies.
+
+Do:
+- Tighten ambiguous locators (fix strict-mode violations: scope to parents, prefer getByLabel/getByTestId/exact text).
+- Add the missing assertions you can derive from the existing flow: success-toast text, post-state visual changes, redirect destination headings.
+- Make URLs pipeline-portable: replace absolute hosts with relative paths (\`page.goto('/domains/search?q=…')\` instead of \`page.goto('https://…/domains/search?q=…')\`). Trust \`baseURL\` in playwright.config.ts.
+- Move credentials and other env-controllable values to \`process.env.X ?? '<demo-fallback>'\` constants above the test.
+- Replace stale comments with precise ones; rename misleading test titles.
+- Remove ACTUAL redundancy: duplicate waits, unused vars, repeated identical assertions.
+
+Do NOT:
+- ❌ Replace UI interactions (\`.fill(...)\` + \`.click('Submit')\`) with direct URL navigation. The UI clicks are a load-bearing part of what's being tested. Only short-circuit a UI flow if the user explicitly asks for it ("just navigate directly", "skip the form, hit the URL").
+- ❌ Remove steps that have side effects (clicking a "Register" button that opens a dialog, dismissing modal flows, "Skip"/"Continue" buttons). These are state transitions, not noise.
+- ❌ Combine sequential interactions into a single assertion. If the original flow was \`Register → dialog → Add to cart → Skip → assert disabled\`, keep all four interactions plus the assertion. The "Im Warenkorb" disabled button is the *result* of the flow, not a trigger.
+- ❌ Use \`getByRole('...', { disabled: true }).click()\` — that's contradictory: a disabled element cannot be clicked, the test will timeout. The \`disabled\` filter belongs on locators used in assertions only, e.g. \`expect(page.getByRole('button', { name: 'X' })).toBeDisabled()\` (which works because \`toBeDisabled\` doesn't require the element to be interactable).
+- ❌ Drop assertions you don't recognise. They're often regression markers the user added intentionally.
+
+A good optimized test runs the SAME user journey, with cleaner selectors, more assertions, env-driven config, and clearer intent.
+
+LOCATOR SPECIFICITY — avoid strict-mode violations
+Playwright runs in strict mode: \`page.getByRole('button', { name: 'X' })\` (or \`getByText\`, etc.) FAILS at runtime if multiple elements match. The error looks like: \`strict mode violation: ... resolved to N elements\`.
+
+Common traps:
+- A short or numeric name like \`'1'\`, \`'OK'\`, \`'Anmelden'\`, \`'Submit'\` is rarely unique. \`getByRole('button', { name: '1' })\` will match every button containing "1" anywhere in its accessible name.
+- Card lists, plan selectors, repeating items often share a common role+name pattern. Don't trust visual uniqueness — there might be hidden ones too.
+
+Disciplined patterns:
+- For badges, counters and small icon-button content: scope through a unique parent landmark first.
+    Cart badge: \`page.getByRole('navigation').getByText('1', { exact: true })\`
+    Or: \`page.locator('button:has(svg.lucide-shopping-cart)').getByText('1', { exact: true })\`
+    Or use getByLabel on the cart button if available.
+- For repeated content (cards, list items): use getByText with \`exact: true\` AND scope through getByRole('list')/('table')/('region')/getByLabel to disambiguate.
+- When the user asks "verify the cart shows 1", **assert the cart-related parent**, not the bare digit:
+    \`expect(page.getByRole('navigation')).toContainText('1');\`
+  This is robust against unrelated "1"s elsewhere on the page (price ranges, plan names, etc.).
+- After a strict-mode violation, IMMEDIATELY scope tighter (parent role, getByLabel, more specific text) — do NOT add \`.first()\` unless ordering is intrinsically meaningful (rare).
+- When uncertain, run getAriaSnapshot scoped to the relevant landmark (header / navigation / form) to find a stable parent before targeting the small element.
+
 RECOVERY
-- If a tool fails with a timeout, call getAriaSnapshot (scoped to a parent if possible) to see the page structure, then retry with a corrected target. Do NOT retry the same selector. Do NOT click random elements.
+- When click/fill/press/waitForSelector fails, the error message AUTOMATICALLY includes a fresh page snapshot ("Page snapshot at time of failure: ..."). READ IT and pick the correct target from there — do NOT call getAriaSnapshot again, you already have the structure. Do NOT retry the same selector that just timed out.
+- If the snapshot shows a textbox without a placeholder but with a label like "E-Mail Adresse", switch from \`{ by: "placeholder" }\` to \`{ by: "label", value: "E-Mail Adresse" }\` or \`{ by: "role", value: "textbox", name: "E-Mail Adresse" }\`. The actual visible text on the page wins over what you guessed from the prompt.
+- If a tool fails with "strict mode violation", scope tighter (parent role/label, exact text). Do NOT keep the same selector and add nth/first.
 - After fill, only \`press('Enter')\` if the form needs it; usually you should click the submit button instead.
 
 NOTIFICATION & NETWORK AWARENESS (very important — silent failures are the #1 cause of looping mistakes)
@@ -575,4 +617,4 @@ Many actions appear to succeed (no exception thrown) but are actually rejected b
 CONSTRAINTS
 - Do NOT navigate to URLs the user did not request.
 - Do NOT narrate. The user reads the chat, but your value is the final script.
-- Always call \`replaceTest\` exactly once at the end (just before \`finish\`) with the complete clean test.`;
+- Call \`replaceTest\` progressively as you complete subtasks (see WORKFLOW step 3) AND once more right before \`finish\` with the final cumulative test.`;
