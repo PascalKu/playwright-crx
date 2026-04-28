@@ -1,0 +1,206 @@
+.ai-tab {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: 12px;
+}
+
+.ai-banner {
+  flex: none;
+  background: var(--vscode-inputValidation-warningBackground, #fff4d8);
+  color: var(--vscode-inputValidation-warningForeground, #553300);
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, #d4a017);
+  padding: 8px 10px;
+}
+
+.ai-history {
+  display: flex;
+  flex-direction: column;
+  flex: auto;
+  line-height: 20px;
+  overflow: auto;
+}
+
+.ai-empty {
+  padding: 12px;
+  color: var(--vscode-descriptionForeground, #777);
+}
+.ai-empty ul { padding-left: 18px; margin: 6px 0 0; }
+.ai-empty li { margin: 2px 0; }
+
+.ai-call {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  border-top: 1px solid var(--vscode-panel-border, #e1e4e8);
+}
+
+.ai-call-header {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  z-index: 1;
+}
+
+.ai-call .codicon {
+  padding: 0 4px;
+  flex: none;
+}
+
+.ai-call-toggle { cursor: pointer; }
+.ai-call-toggle.empty { visibility: hidden; }
+
+/* Status icon colors mirror Log's vocabulary. */
+.ai-call.user      .ai-call-icon.codicon-account  { color: var(--vscode-charts-blue, #3794ff); }
+.ai-call.assistant .ai-call-icon.codicon-comment  { color: var(--vscode-charts-purple, #a371f7); }
+.ai-call.ok        .ai-call-icon.codicon-check    { color: #21a945; font-weight: bold; }
+.ai-call.warn      .ai-call-icon.codicon-warning  { color: var(--vscode-charts-yellow, #d4a017); }
+.ai-call.in-progress .ai-call-icon.codicon-loading { color: var(--vscode-charts-blue, #3794ff); }
+.ai-call.usage     .ai-call-icon.codicon-info     { color: var(--vscode-descriptionForeground, #777); }
+
+/* Error rows: red background like .call-log-call.error. */
+.ai-call.error {
+  background-color: var(--vscode-inputValidation-errorBackground, rgba(198, 40, 40, 0.06));
+}
+.ai-call.error .ai-call-header,
+.ai-call.error .ai-call-icon.codicon-error {
+  color: var(--vscode-errorForeground, #c62828);
+}
+
+.ai-call.cancelled {
+  color: var(--vscode-descriptionForeground, #777);
+}
+
+.ai-call-prefix {
+  font-weight: bold;
+  flex: none;
+  margin-right: 6px;
+}
+.ai-call-prefix.tool {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: normal;
+}
+
+.ai-call-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground, #777);
+}
+
+.ai-call-result {
+  flex: 0 1 auto;
+  margin-left: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-descriptionForeground, #777);
+}
+.ai-call-result.error { color: var(--vscode-errorForeground, #c62828); }
+.ai-call-result.warn  { color: var(--vscode-charts-yellow, #d4a017); }
+
+.ai-call-url {
+  color: var(--vscode-charts-blue, #3794ff);
+}
+
+.ai-call-message {
+  padding: 4px 4px 6px 36px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  font-family: inherit;
+}
+
+.ai-call-section {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #777);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 6px 4px 2px 36px;
+}
+
+.ai-call-code {
+  margin: 2px 4px 4px 36px;
+  padding: 6px 8px;
+  background: var(--vscode-editor-background, rgba(127, 127, 127, 0.06));
+  border: 1px solid var(--vscode-panel-border, #e1e4e8);
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  tab-size: 2;
+}
+.ai-call-code.err {
+  border-color: var(--vscode-inputValidation-errorBorder, #f5c2c7);
+  background: var(--vscode-inputValidation-errorBackground, #fff5f5);
+  color: var(--vscode-errorForeground, #842029);
+}
+
+/* Spinner — borrow Log's --vscode-charts-blue for the loading icon, plus rotation. */
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+.codicon-modifier-spin {
+  animation: ai-spin 1.2s linear infinite;
+  display: inline-block;
+}
+
+.ai-input {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--vscode-panel-border, #ddd);
+  background: var(--vscode-sideBar-background, var(--vscode-panel-background, #ffffff));
+}
+
+.ai-input textarea {
+  resize: vertical;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px;
+  border: 1px solid var(--vscode-input-border, #ccc);
+  border-radius: 3px;
+  background: var(--vscode-input-background, white);
+  color: var(--vscode-input-foreground, inherit);
+}
+
+.ai-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ai-actions button {
+  padding: 4px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  background: var(--vscode-button-background, #4CAF50);
+  color: var(--vscode-button-foreground, white);
+}
+.ai-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ai-actions button.cancel {
+  background: var(--vscode-button-secondaryBackground, #c62828);
+  color: var(--vscode-button-secondaryForeground, white);
+}
+.ai-actions button.clear {
+  background: transparent;
+  color: var(--vscode-foreground, inherit);
+  border-color: var(--vscode-input-border, #ccc);
+}

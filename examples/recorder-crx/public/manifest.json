@@ -1,6 +1,6 @@
 {
   "name": "Playwright CRX",
-  "version": "0.15.0",
+  "version": "0.15.23",
   "manifest_version": 3,
   "icons": {
     "16": "icon-16x16.png",
@@ -40,5 +40,6 @@
     "page": "preferences.html",
     "open_in_tab": false
   },
-  "permissions": ["debugger", "tabs", "contextMenus", "storage", "sidePanel"]
+  "permissions": ["debugger", "tabs", "contextMenus", "storage", "sidePanel"],
+  "host_permissions": ["https://api.anthropic.com/*"]
 }

@@ -18,6 +18,7 @@ import type { CallLog, ElementInfo, Mode, Source } from './recorderTypes';
 import { CodeMirrorWrapper } from '@web/components/codeMirrorWrapper';
 import type { SourceHighlight } from '@web/components/codeMirrorWrapper';
 import { SplitView } from '@web/components/splitView';
+import type { TabbedPaneTabModel } from '@web/components/tabbedPane';
 import { TabbedPane } from '@web/components/tabbedPane';
 import { Toolbar } from '@web/components/toolbar';
 import { emptySource, SourceChooser } from '@web/components/sourceChooser';
@@ -38,6 +39,7 @@ export interface RecorderProps {
   mode: Mode,
   onEditedCode?: (code: string) => any,
   onCursorActivity?: (position: { line: number }) => any,
+  extraTabs?: TabbedPaneTabModel[],
 }
 
 export const Recorder: React.FC<RecorderProps> = ({
@@ -47,6 +49,7 @@ export const Recorder: React.FC<RecorderProps> = ({
   mode,
   onEditedCode,
   onCursorActivity,
+  extraTabs,
 }) => {
   const [selectedFileId, setSelectedFileId] = React.useState<string | undefined>();
   const [runningFileId, setRunningFileId] = React.useState<string | undefined>();
@@ -217,6 +220,7 @@ export const Recorder: React.FC<RecorderProps> = ({
             title: 'Aria',
             render: () => <CodeMirrorWrapper text={ariaSnapshot || ''} placeholder='Type aria template to match' language={'yaml'} onChange={onAriaEditorChange} highlight={ariaSnapshotErrors} wrapLines={true} />
           },
+          ...(extraTabs ?? []),
         ]}
         selectedTab={selectedTab}
         setSelectedTab={setSelectedTab}

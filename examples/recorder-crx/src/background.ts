@@ -19,6 +19,7 @@ import type { CrxApplication } from 'playwright-crx';
 import playwright, { crx, _debug, _setUnderTest, _isUnderTest as isUnderTest } from 'playwright-crx';
 import type { CrxSettings } from './settings';
 import { addSettingsChangedListener, defaultSettings, loadSettings } from './settings';
+import { runAgent, type AgentMessage, type AgentStreamEvent } from './aiAgent';
 
 type CrxMode = Mode | 'detached';
 
@@ -195,6 +196,157 @@ chrome.runtime.onMessage.addListener((message, _, sendResponse) => {
     return true;
   }
 });
+
+type AiInbound =
+  | { type: 'ai'; method: 'run'; prompt: string; currentScript?: string }
+  | { type: 'ai'; method: 'cancel' }
+  | { type: 'ai'; method: 'clear' };
+
+type AiOutbound =
+  | { type: 'ai'; method: 'event'; event: AgentStreamEvent };
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'ai')
+    return;
+
+  let abort: AbortController | undefined;
+  let conversation: AgentMessage[] = [];
+
+  const send = (event: AgentStreamEvent) => {
+    try {
+      const msg: AiOutbound = { type: 'ai', method: 'event', event };
+      port.postMessage(msg);
+    } catch {
+      // port disconnected
+    }
+  };
+
+  port.onDisconnect.addListener(() => {
+    abort?.abort();
+    conversation = [];
+  });
+
+  port.onMessage.addListener(async (raw: AiInbound) => {
+    if (!raw || raw.type !== 'ai')
+      return;
+
+    if (raw.method === 'cancel') {
+      abort?.abort();
+      return;
+    }
+
+    if (raw.method === 'clear') {
+      abort?.abort();
+      conversation = [];
+      return;
+    }
+
+    if (raw.method !== 'run')
+      return;
+
+    if (abort)
+      abort.abort();
+
+    abort = new AbortController();
+
+    try {
+      const settings = await loadSettings();
+      const apiKey = (settings.claudeApiKey ?? '').trim();
+      if (!apiKey) {
+        send({ kind: 'error', message: 'No Anthropic API key configured. Set it in Preferences.' });
+        send({ kind: 'done', reason: 'error' });
+        return;
+      }
+
+      const crxApp = await crxAppPromise;
+      const page = crxApp?.pages()[0];
+      const pageUrl = page?.url();
+
+      // Track HTTP failures + request failures during this agent run so the
+      // agent can pop them via the getNetworkErrors tool / auto-attached
+      // result side effects.
+      type NetErr = { url: string; method: string; status: number; failure?: string; timestamp: number };
+      const networkErrors: NetErr[] = [];
+      const onResponse = (response: any) => {
+        try {
+          const status = response.status();
+          if (status < 400)
+            return;
+          networkErrors.push({
+            url: response.url(),
+            method: response.request().method(),
+            status,
+            timestamp: Date.now(),
+          });
+          if (networkErrors.length > 200)
+            networkErrors.shift();
+        } catch { /* ignore */ }
+      };
+      const onRequestFailed = (request: any) => {
+        try {
+          networkErrors.push({
+            url: request.url(),
+            method: request.method(),
+            status: 0,
+            failure: request.failure()?.errorText ?? 'request failed',
+            timestamp: Date.now(),
+          });
+          if (networkErrors.length > 200)
+            networkErrors.shift();
+        } catch { /* ignore */ }
+      };
+      const attached: any[] = [];
+      for (const p of crxApp?.pages() ?? []) {
+        try {
+          (p as any).on('response', onResponse);
+          (p as any).on('requestfailed', onRequestFailed);
+          attached.push(p);
+        } catch { /* ignore */ }
+      }
+      const onPageOpened = (p: any) => {
+        try {
+          p.on('response', onResponse);
+          p.on('requestfailed', onRequestFailed);
+          attached.push(p);
+        } catch { /* ignore */ }
+      };
+      try { (crxApp as any)?.context().on('page', onPageOpened); } catch { /* ignore */ }
+
+      // Keep the recorder in its current mode (typically 'recording') so the
+      // user can watch the test script grow live as the AI performs actions.
+      // The agent calls replaceTest() at the end to curate / clean the script.
+      try {
+        await runAgent({
+          apiKey,
+          model: settings.claudeModel ?? 'haiku',
+          maxSteps: settings.aiMaxSteps ?? 25,
+          maxTokens: settings.aiMaxTokens ?? 8192,
+          prompt: raw.prompt,
+          currentScript: raw.currentScript,
+          pageUrl,
+          localBaseUrl: settings.localBaseUrl,
+          priorMessages: conversation,
+          getPage: () => crxApp?.pages()[0],
+          getRecorder: () => crxApp?.recorder,
+          popNetworkErrors: () => networkErrors.splice(0),
+          onEvent: send,
+          onMessages: msgs => { conversation = msgs; },
+          signal: abort.signal,
+        });
+      } finally {
+        for (const p of attached) {
+          try { (p as any).off('response', onResponse); } catch { /* ignore */ }
+          try { (p as any).off('requestfailed', onRequestFailed); } catch { /* ignore */ }
+        }
+        try { (crxApp as any)?.context().off('page', onPageOpened); } catch { /* ignore */ }
+      }
+    } catch (e: any) {
+      send({ kind: 'error', message: e?.message ?? String(e) });
+      send({ kind: 'done', reason: 'error' });
+    }
+  });
+});
+
 
 chrome.runtime.onInstalled.addListener(details => {
   if ((globalThis as any).__crxTest)

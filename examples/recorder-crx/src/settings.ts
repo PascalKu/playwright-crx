@@ -13,26 +13,51 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+export type ClaudeModelId = 'haiku' | 'sonnet' | 'opus';
+
 export type CrxSettings = {
   testIdAttributeName: string;
   targetLanguage: string;
   sidepanel?: boolean;
   experimental?: boolean;
   playInIncognito: boolean;
+  claudeApiKey?: string;
+  claudeModel?: ClaudeModelId;
+  aiMaxSteps?: number;
+  aiMaxTokens?: number;
+  localBaseUrl?: string;
 };
 
-export const defaultSettings = {
+export const defaultSettings: CrxSettings = {
   testIdAttributeName: 'data-testid',
   targetLanguage: 'playwright-test',
   sidepanel: true,
   experimental: false,
   playInIncognito: false,
+  claudeApiKey: '',
+  claudeModel: 'haiku',
+  aiMaxSteps: 25,
+  aiMaxTokens: 8192,
+  localBaseUrl: 'http://localhost:3000',
 };
+
+const SETTINGS_KEYS = [
+  'testIdAttributeName',
+  'targetLanguage',
+  'sidepanel',
+  'playInIncognito',
+  'experimental',
+  'claudeApiKey',
+  'claudeModel',
+  'aiMaxSteps',
+  'aiMaxTokens',
+  'localBaseUrl',
+] as const;
 
 export async function loadSettings(): Promise<CrxSettings> {
   const [isAllowedIncognitoAccess, loadedPreferences] = await Promise.all([
     chrome.extension.isAllowedIncognitoAccess(),
-    chrome.storage.sync.get(['testIdAttributeName', 'targetLanguage', 'sidepanel', 'playInIncognito', 'experimental']) as Partial<CrxSettings>,
+    chrome.storage.sync.get(SETTINGS_KEYS as unknown as string[]) as Partial<CrxSettings>,
   ]);
   return { ...defaultSettings, ...loadedPreferences, playInIncognito: !!loadedPreferences.playInIncognito && isAllowedIncognitoAccess };
 }
@@ -44,10 +69,9 @@ export async function storeSettings(settings: CrxSettings) {
 const listeners = new Map<(settings: CrxSettings) => void, any>();
 
 export function addSettingsChangedListener(listener: (settings: CrxSettings) => void) {
-  const wrappedListener = ({ testIdAttributeName, targetLanguage, sidepanel, playInIncognito, experimental }: Record<string, chrome.storage.StorageChange>) => {
-    if (!testIdAttributeName && !targetLanguage && sidepanel && playInIncognito && experimental)
+  const wrappedListener = (changes: Record<string, chrome.storage.StorageChange>) => {
+    if (!SETTINGS_KEYS.some(k => k in changes))
       return;
-
     loadSettings().then(listener).catch(() => {});
   };
   listeners.set(listener, wrappedListener);

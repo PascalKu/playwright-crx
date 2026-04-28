@@ -36,7 +36,12 @@ export const PreferencesForm: React.FC = ({}) => {
       initialSettings.targetLanguage !== settings.targetLanguage ||
       initialSettings.testIdAttributeName !== settings.testIdAttributeName ||
       initialSettings.playInIncognito !== settings.playInIncognito ||
-      initialSettings.experimental !== settings.experimental;
+      initialSettings.experimental !== settings.experimental ||
+      initialSettings.claudeApiKey !== settings.claudeApiKey ||
+      initialSettings.claudeModel !== settings.claudeModel ||
+      initialSettings.aiMaxSteps !== settings.aiMaxSteps ||
+      initialSettings.aiMaxTokens !== settings.aiMaxTokens ||
+      initialSettings.localBaseUrl !== settings.localBaseUrl;
   }, [settings, initialSettings]);
 
   const saveSettings = React.useCallback((e: React.FormEvent<HTMLFormElement>) => {
@@ -114,6 +119,64 @@ export const PreferencesForm: React.FC = ({}) => {
         onChange={e => setSettings({ ...settings, experimental: e.target.checked })}
       />
     </div>
+    <fieldset className='ai-section'>
+      <legend>AI assistant (Claude)</legend>
+      <label htmlFor='claudeApiKey'>Anthropic API key:</label>
+      <input
+        type='password'
+        id='claudeApiKey'
+        name='claudeApiKey'
+        autoComplete='off'
+        spellCheck={false}
+        placeholder='sk-ant-...'
+        value={settings.claudeApiKey ?? ''}
+        onChange={e => setSettings({ ...settings, claudeApiKey: e.target.value })}
+      />
+      <div className='note'>Stored in <code>chrome.storage.sync</code>. Used only to call <code>api.anthropic.com</code> from this extension.</div>
+      <label htmlFor='claudeModel'>Model:</label>
+      <select
+        id='claudeModel'
+        name='claudeModel'
+        value={settings.claudeModel ?? 'haiku'}
+        onChange={e => setSettings({ ...settings, claudeModel: e.target.value as 'haiku' | 'sonnet' | 'opus' })}
+      >
+        <option value='haiku'>Haiku 4.5 (fast, cheap)</option>
+        <option value='sonnet'>Sonnet 4.6 (balanced)</option>
+        <option value='opus'>Opus 4.7 (best quality)</option>
+      </select>
+      <label htmlFor='aiMaxSteps'>Max tool steps per turn:</label>
+      <input
+        type='number'
+        id='aiMaxSteps'
+        name='aiMaxSteps'
+        min={1}
+        max={100}
+        value={settings.aiMaxSteps ?? 25}
+        onChange={e => setSettings({ ...settings, aiMaxSteps: Math.max(1, Math.min(100, Number(e.target.value) || 25)) })}
+      />
+      <label htmlFor='aiMaxTokens'>Max output tokens per response:</label>
+      <input
+        type='number'
+        id='aiMaxTokens'
+        name='aiMaxTokens'
+        min={1024}
+        max={32000}
+        step={1024}
+        value={settings.aiMaxTokens ?? 8192}
+        onChange={e => setSettings({ ...settings, aiMaxTokens: Math.max(1024, Math.min(32000, Number(e.target.value) || 8192)) })}
+      />
+      <div className='note'>Bigger = the AI can write longer test scripts in one shot, but more wall-clock time per response. 8192 is fine for most tests; raise to 16384+ if your tests are very long.</div>
+      <label htmlFor='localBaseUrl'>Local base URL (used as fallback in generated tests):</label>
+      <input
+        type='text'
+        id='localBaseUrl'
+        name='localBaseUrl'
+        placeholder='http://localhost:3000'
+        value={settings.localBaseUrl ?? ''}
+        onChange={e => setSettings({ ...settings, localBaseUrl: e.target.value })}
+      />
+      <div className='note'>{`The AI will write tests as `}<code>{`page.goto('/path')`}</code>{` with `}<code>{`process.env.BASE_URL ?? '`}<em>this value</em>{`'`}</code>{` as the local fallback. Override `}<code>BASE_URL</code>{` in your CI to target staging/prod.`}</div>
+    </fieldset>
     <button id='submit' type='submit' disabled={!canSave}>{canSave ? 'Save' : 'Saved'}</button>
   </form>;
 };

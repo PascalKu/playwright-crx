@@ -25,6 +25,7 @@ import type { CrxSettings } from './settings';
 import { addSettingsChangedListener, defaultSettings, loadSettings, removeSettingsChangedListener } from './settings';
 import ModalContainer, { create as createModal } from 'react-modal-promise';
 import { SaveCodeForm } from './saveCodeForm';
+import { AiTab } from './aiTab';
 import './crxRecorder.css';
 import './form.css';
 
@@ -187,6 +188,20 @@ export const CrxRecorder: React.FC = ({
     window.dispatch({ event: 'cursorActivity', params: { position } });
   }, []);
 
+  const sourcesRef = React.useRef(sources);
+  sourcesRef.current = sources;
+  const selectedFileIdRef = React.useRef(selectedFileId);
+  selectedFileIdRef.current = selectedFileId;
+  const getCurrentScript = React.useCallback(() => {
+    return sourcesRef.current.find(s => s.id === selectedFileIdRef.current)?.text;
+  }, []);
+
+  const aiExtraTabs = React.useMemo(() => [{
+    id: 'ai',
+    title: 'AI',
+    render: () => <AiTab hasApiKey={!!(settings.claudeApiKey && settings.claudeApiKey.trim())} getCurrentScript={getCurrentScript} />,
+  }], [settings.claudeApiKey, getCurrentScript]);
+
   return <>
     <ModalContainer />
 
@@ -205,7 +220,7 @@ export const CrxRecorder: React.FC = ({
           <ToolbarButton icon='settings-gear' title='Preferences' onClick={showPreferences}></ToolbarButton>
         </Toolbar>
       </>}
-      <Recorder sources={sources} paused={paused} log={log} mode={mode} onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} />
+      <Recorder sources={sources} paused={paused} log={log} mode={mode} onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} extraTabs={aiExtraTabs} />
     </div>
   </>;
 };
